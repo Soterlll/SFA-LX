@@ -1,0 +1,96 @@
+name: Build SFA with lx core
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout SFA
+        uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Resolve latest lx release
+        id: lx
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          DATA=$(curl -sL -H "Authorization: Bearer $GH_TOKEN" https://api.github.com/repos/Leadaxe/sing-box-lx/releases/latest)
+          TAG=$(echo "$DATA" | grep -m1 '"tag_name"' | sed -E 's/.*"tag_name": *"([^"]+)".*/\1/')
+          AAR_URL=$(echo "$DATA" | grep -o '"browser_download_url": *"[^"]*libbox-[0-9][^"]*\.aar"' | head -n1 | sed -E 's/.*"(https[^"]+)"/\1/')
+          LEGACY_URL=$(echo "$DATA" | grep -o '"browser_download_url": *"[^"]*libbox-legacy-[^"]*\.aar"' | head -n1 | sed -E 's/.*"(https[^"]+)"/\1/')
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "aar_url=$AAR_URL" >> "$GITHUB_OUTPUT"
+          echo "legacy_url=$LEGACY_URL" >> "$GITHUB_OUTPUT"
+          echo "Resolved lx release: $TAG"
+
+      - name: Drop in lx core
+        run: |
+          mkdir -p app/libs
+          curl -L -o app/libs/libbox.aar "${{ steps.lx.outputs.aar_url }}"
+          curl -L -o app/libs/libbox-legacy.aar "${{ steps.lx.outputs.legacy_url }}"
+
+      - name: Grant execute permission for gradlew
+        run: chmod +x gradlew
+
+      - name: Patch SFA code for lx core compatibility
+        run: |
+          # Закомментировать powerReportEnabled в Application.kt
+          sed -i 's/.*powerReportEnabled.*/\/\/ &/' app/src/main/java/io/nekohasekai/sfa/Application.kt
+          
+          # Закомментировать оба вызова promotePowerReportDraft в BoxService.kt
+          sed -i 's/.*promotePowerReportDraft.*/\/\/ &/' app/src/main/java/io/nekohasekai/sfa/bg/BoxService.kt
+
+      - name: Generate Release Keystore
+        run: |
+          # Удаляем старый файл, если он пришел из репозитория
+          rm -f "app/release.keystore"
+          
+          # Создаем чистый новый keystore строго по пути app/release.keystore
+          keytool -genkeypair -v \
+            -keystore "app/release.keystore" \
+            -alias "sfa-key" \
+            -keyalg RSA -keysize 2048 -validity 10000 \
+            -storepass "sfa_password_123" -keypass "sfa_password_123" \
+            -dname "CN=SFA, OU=SFA, O=SFA, L=City, S=State, C=US"
+
+      - name: Build Release APKs
+        run: |
+          # Формируем Base64 строку с конфигом для функции getProps() в build.gradle.kts
+          PROPS_B64=$(echo -n -e "KEYSTORE_PASS=sfa_password_123\nALIAS_NAME=sfa-key\nALIAS_PASS=sfa_password_123" | base64 -w0)
+          
+          # Запускаем сборку флейворов Other и OtherLegacy
+          LOCAL_PROPERTIES="$PROPS_B64" ./gradlew assembleOtherRelease assembleOtherLegacyRelease --stacktrace
+
+      - name: Remove keystore from runner
+        if: always()
+        run: rm -f "app/release.keystore"
+
+      - name: Upload APK artifact
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: sfa-lx-release
+          path: app/build/outputs/apk/**/*.apk
+          if-no-files-found: ignore
+
+      - name: Publish/update latest release
+        if: success()
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: latest
+          name: SFA + sing-box-lx ${{ steps.lx.outputs.tag }} (latest)
+          files: app/build/outputs/apk/**/*.apk
+          make_latest: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
