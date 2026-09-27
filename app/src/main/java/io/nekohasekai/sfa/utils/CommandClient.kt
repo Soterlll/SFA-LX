@@ -4,6 +4,7 @@ import android.util.Log
 import io.nekohasekai.libbox.CommandClientHandler
 import io.nekohasekai.libbox.CommandClientOptions
 import io.nekohasekai.libbox.ConnectionEvents
+import io.nekohasekai.libbox.DnsQuery
 import io.nekohasekai.libbox.Libbox
 import io.nekohasekai.libbox.LogEntry
 import io.nekohasekai.libbox.LogIterator
@@ -283,6 +284,11 @@ open class CommandClient(
         override fun writeConnectionEvents(events: ConnectionEvents?) {
             if (events == null || !isActiveEpoch(epoch)) return
             getAllHandlers().forEach { it.writeConnectionEvents(events) }
+        }
+
+        override fun writeDNSQuery(query: DnsQuery?) {
+            if (query == null || !isActiveEpoch(epoch)) return
+            // lx: SubscribeDNSQueries not used by this build, ignore.
         }
     }
 }
