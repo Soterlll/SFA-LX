@@ -70,21 +70,12 @@ open class CommandClient(
         Outbounds,
     }
 
-    enum class ConnectionErrorKind {
-        // A connect attempt failed; retrying is not expected to succeed.
-        ConnectFailed,
-
-        // An established connection dropped (app suspension, network change,
-        // server restart); reconnecting may recover.
-        ConnectionLost,
-    }
-
     interface Handler {
         fun onConnected() {}
 
         fun onDisconnected() {}
 
-        fun onConnectionError(kind: ConnectionErrorKind, message: String) {}
+        fun onConnectionError(message: String) {}
 
         fun updateStatus(status: StatusMessage) {}
 
@@ -161,10 +152,7 @@ open class CommandClient(
             } catch (e: Exception) {
                 Log.d("CommandClient", "connect failed", e)
                 if (isActiveEpoch(epoch)) {
-                    handler.onConnectionError(
-                        ConnectionErrorKind.ConnectFailed,
-                        e.message ?: e.toString(),
-                    )
+                    handler.onConnectionError(e.message ?: e.toString())
                 }
                 return@launch
             }
@@ -218,7 +206,7 @@ open class CommandClient(
             if (!isActiveEpoch(epoch)) return
             getAllHandlers().forEach { it.onDisconnected() }
             if (message != null) {
-                handler.onConnectionError(ConnectionErrorKind.ConnectionLost, message)
+                handler.onConnectionError(message)
             }
             Log.d("CommandClient", "disconnected: $message")
         }
